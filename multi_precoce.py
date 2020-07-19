@@ -96,7 +96,6 @@ def read_labels(filename):
         b= str(data['Outcome'][i])
         c= str(data['DISPO'][i])
         if a.startswith('EXC') or a.startswith('exc')  or a.startswith('Exc') :
-         
             continue
         elif b != 'nan' and b!= '-3' and c == 'YES':
             outcome.append(data['Outcome'][i])
@@ -189,14 +188,12 @@ class FrEM(BaseEstimator):
         
         """
         Fit to data, then perform the ensemble learning 
-        
         Parameters
         ----------
         model : regression model
         X : 2D array
         y : label vector
         """
-        
         #PART 1 : load index
         train_idx = pickle.load(open('INDEX/train_idx', 'rb'))
         val_idx = pickle.load(open('INDEX/val_idx', 'rb'))
@@ -213,7 +210,6 @@ class FrEM(BaseEstimator):
             X_val = np.concatenate((X_val_1,X_val_2),axis=0)
             y_train = np.concatenate((y_train_1,y_train_2),axis=0)
             y_val = np.concatenate((y_val_1,y_val_2),axis=0)
-            
             liste_ward_label=[]    
             liste_r2=[]
             liste_coef=[]
