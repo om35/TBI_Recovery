@@ -2,7 +2,7 @@
 """
 Created on Thu Apr  9 14:09:49 2020
 
-@author: Mohamed OUERFELLI 
+@author: mohamed ouerfelli
 """
 
 from sklearn.base import BaseEstimator
@@ -28,17 +28,16 @@ from sklearn.cluster import FeatureAgglomeration
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import r2_score
 from sklearn.preprocessing import normalize
-
 def warn(*args, **kwargs):
     pass
 import warnings
 warnings.warn = warn
 
-
 os.path.join(os.path.dirname(__file__))
 
 
-OUtput= "OUTPUT_mono"
+OUtput= "OUTPUT_precoce"
+
 
 #Define Folder
 if not os.path.exists(OUtput):
@@ -69,7 +68,6 @@ mask_path='mask.nii.gz'
 nifti_masker = NiftiMasker(mask_img=mask_path).fit()   #rajouter fit pour tester
 path_label = 'TC_Lionel.xls'
   
-
 def read_labels(filename):
 
     """
@@ -108,8 +106,7 @@ def read_labels(filename):
     label=label.reshape(len(label),)
 
     return label , idP
-
-
+    
 def mean_weights(weights):
     
     """
@@ -135,6 +132,9 @@ def mean_weights(weights):
 
 
 def compute_connectivity():
+    """
+    Compute connectivity : useful for the FeatureAgglomeration function : spatial constraints
+    """
     from sklearn.feature_extraction import image
     mask= np.asarray(nifti_masker.mask_img_.get_data()).astype(bool)
     shape = mask.shape
@@ -148,11 +148,11 @@ def save_clustering(labels_,j,fold,parcels):
     """
     This function is used to save clustering plot.
     input : labels,index of parcellation,index of iteration of cross val externe , number of parcels.
-    output: plot and save clustering associated with the index of parcellation and iteration of cross val and the number of parcels.
+    Output: plot and save clustering associated with the index of parcellation and iteration of cross val and the number of parcels.
     """
     y = labels_.reshape(1,len(labels_))
     plot = nifti_masker.inverse_transform(y)
-    plotting.plot_roi(plot, title="Ward FeatureAgglomeration",  display_mode='xz',output_file='%s/clustering/00000%s_fold_parcellation_%s_0000%s_parcels.png' %(OUtputfold+1,j+1,parcels) , cut_coords=(5,  9))
+    plotting.plot_roi(plot, title="Ward FeatureAgglomeration",  display_mode='xz',output_file='OUTPUT_precoce/clustering/00000%s_fold_parcellation_%s_0000%s_parcels.png' %(fold+1,j+1,parcels) , cut_coords=(5,  9))
     plot.to_filename('%s/Nifti/00000%s_fold_parcellation_%s_0000%s_parcels.nii.gz' %(OUtput,fold+1,j+1,parcels))
 
 
@@ -185,7 +185,7 @@ class FrEM(BaseEstimator):
         self.n_jobs = n_jobs
 
 
-    def fit(self,model,X,y):
+    def fit(self,model,X1,X2,y):
         
         """
         Fit to data, then perform the ensemble learning 
@@ -196,27 +196,36 @@ class FrEM(BaseEstimator):
         X : 2D array
         y : label vector
         """
+        
+        #PART 1 : load index
         train_idx = pickle.load(open('INDEX/train_idx', 'rb'))
         val_idx = pickle.load(open('INDEX/val_idx', 'rb'))
         J= len(val_idx[0])
         liste_w_aprox=[] 
-        parcelles=[]
         intercp=[]
+        parcelles=[]
         connectivity= compute_connectivity()
+        
         for train,val, j in zip(train_idx[self.fold],val_idx[self.fold], range(J)):
-            X_train, X_val, y_train, y_val = X[train], X[val], y[train], y[val]
+            X_train_1, X_val_1, y_train_1, y_val_1 = X1[train], X1[val], y[train], y[val]
+            X_train_2, X_val_2, y_train_2, y_val_2 = X2[train], X2[val], y[train], y[val]
+            X_train = np.concatenate((X_train_1,X_train_2),axis=0)
+            X_val = np.concatenate((X_val_1,X_val_2),axis=0)
+            y_train = np.concatenate((y_train_1,y_train_2),axis=0)
+            y_val = np.concatenate((y_val_1,y_val_2),axis=0)
+            
             liste_ward_label=[]    
             liste_r2=[]
             liste_coef=[]
             intercept=[]
-            parcels=[50,100,200,500,1000,1500,2000,2500,3000,3500,4000,4500,5000,5500,6000,6500,7000,7500,8000,9000,10000] 
+            parcels=[50,100,200,500,1000,1500,2000,2500,3000,3500,4000,4500,5000,5500,6000,6500,7000,7500,8000,9000] 
+
+            #PART2: hyperparameter selection and training model
             for p in parcels:
                 ward = FeatureAgglomeration(n_clusters=p,connectivity=connectivity,linkage='ward')
                 X_red= ward.fit_transform(X_train)
                 liste_ward_label.append(np.ravel(ward.labels_))
                 L= [0.0001,0.001,0.01,0.1,1,10,100,120,150,170,200,220,250,300,350,370,390,400,420,450,470,500,550,570,600,650,670,700,720,750,800,820,850,900,1000,1200,1500,2000,3000,5000] 
-
-
                 for l in L:
                     mod = model.set_params(C = l)
                     mod.fit(X_red,y_train)
@@ -225,17 +234,16 @@ class FrEM(BaseEstimator):
                     liste_coef.append(mod.coef_)
                     intercept.append(mod.intercept_)
                     
+            #PART3: Select the best weight with the best performance on validation set
             Best = max(liste_r2) 
-            Best_parcels=liste_r2.index(Best)    
-            #Select the best weight 
+            Best_parcels=liste_r2.index(Best)
             coef = liste_coef[Best_parcels]
-            intercp.append(intercept[Best_parcels])
-            #Save clustering         
+            intercp.append(intercept[Best_parcels])        
             labels= liste_ward_label[int(Best_parcels/len(L))]
             n_parcels=coef.shape[0]
             parcelles.append(n_parcels)
             n_voxels = len(labels)
-            save_clustering(labels,j,self.fold,n_parcels)   
+            #save_clustering(labels,j,self.fold,n_parcels)   
             
             #Return to voxel space
             incidence = coo_matrix(
@@ -249,18 +257,20 @@ class FrEM(BaseEstimator):
             
             liste_w_aprox.append(w_aprox)
             
+            
+            #PART4: Saving results
             if ((j+1) % 10) ==0 :
-                W= np.array(liste_w_aprox).reshape(j+1,X.shape[1])
+                W= np.array(liste_w_aprox).reshape(j+1,X1.shape[1])
                 it= np.mean(intercp)
                 W_bagg= np.array(mean_weights(W))
-                pickle.dump(W_bagg, open('%s/Weight/%s_timestep_%s_fold_weight'%(OUtput,j+1,self.fold +1), 'wb'))
+                pickle.dump(W_bagg, open('%s/Weight/%s_timestep_%s_fold_Beta'%(OUtput,j+1,self.fold +1), 'wb'))
                 pickle.dump(it, open('%s/Intercept/%s_timestep_%s_fold_intercept'%(OUtput,j+1,self.fold +1), 'wb'))
                 pickle.dump(parcelles, open('%s/FINAL/parcels' %OUtput, 'wb'))
-
     
         
+            
 
-def cross_val_compute(model,X,Outcome,fold,ftrain, test,K):
+def cross_val_compute(model,X1,X2,Outcome,fold,ftrain, test,K):
     """
     Parameters
     ----------
@@ -275,20 +285,28 @@ def cross_val_compute(model,X,Outcome,fold,ftrain, test,K):
     
     """
 
-    X_trai, X_tes, y_trai, y_tes = X[ftrain], X[test], Outcome[ftrain], Outcome[test]
-    frem =  FrEM(data=X_trai,y=y_trai,fold=fold, memory=None,  n_jobs=1)
-    pickle.dump(X_tes, open('%s/Folds/%s_fold_X_test'%(OUtput,fold+1), 'wb'))
-    pickle.dump(y_tes, open('%s/Folds/%s_fold_y_tes'%(OUtput,fold+1), 'wb'))
-    frem.fit(model,X_trai,y_trai)
+    X_trai_1, X_tes_1, y_trai, y_tes1 = X1[ftrain], X1[test], Outcome[ftrain], Outcome[test]
+    X_trai_2, X_tes_2 = X2[ftrain], X2[test]
+    X_tes = np.concatenate((X_tes_1,X_tes_2),axis=0)
+    y_tes = np.concatenate((y_tes1 ,y_tes1),axis=0)
+    frem =  FrEM(fold=fold, memory=None,  n_jobs=1)
+    pickle.dump(X_tes, open('%s/Folds/%s_fold_X_test_mv'%(OUtput,fold+1), 'wb'))
+    pickle.dump(y_tes, open('%s/Folds/%s_fold_y_test_mv'%(OUtput,fold+1), 'wb'))
+    frem.fit(model,X_trai_1,X_trai_2,y_trai)
 
 
 
-def run(model,X,Outcome):
+
+def run(model,X1,X2,Outcome):
+
+    """
+    Run in parallel ; with joblib.parallel
+    """
     
     Ftrain_idx = pickle.load(open('INDEX/Fulltrain_idx', 'rb'))
     test_idx = pickle.load(open('INDEX/Test_idx', 'rb'))
     list_test_index= np.hstack(test_idx)
-    pickle.dump(list_test_index, open('%s/FINAL/Test' %OUtput, 'wb'))   #Save all index of Test
+    pickle.dump(list_test_index, open('%s/FINAL/Test/FINAL/Test' %OUtput, 'wb'))   #Save all index of Test
 
     jobs= -1
     if jobs == -1:
@@ -296,65 +314,55 @@ def run(model,X,Outcome):
     print("This step can take few minutes")
     ret= joblib.Parallel(n_jobs=jobs)(joblib.delayed(
             cache(cross_val_compute, memory=Memory(cachedir=None)))
-          (model,X,Outcome,fold,ftrain,test,len(Ftrain_idx))
+          (model,X1,X2,Outcome,fold,ftrain,test,len(Ftrain_idx))
               for ftrain,test,fold in zip(Ftrain_idx,test_idx,range(len(Ftrain_idx))))
 
-
-
 def recupere_resultat(K,t):
-    predi=[]
+    """
+    recupere resultats
+    """
+    prediction_list=[]
     y_test=[]
     Weight=[]
     X_test=[]
-    score_folds=[]
-           
+
     for i in range(K):
-        weight = pickle.load(open('Weight/%s_timestep_%s_fold_weight'%(t,i+1), 'rb'))
-        intercept = pickle.load(open('Intercept/%s_timestep_%s_fold_intercept'%(t,i+1), 'rb'))
-        X_tes = pickle.load(open('Folds/%s_fold_X_test'%(i+1), 'rb'))
-        y_tes = pickle.load(open('Folds/%s_fold_y_tes'%(i+1), 'rb'))
-        prediction= X_tes @ weight.T + intercept
-        predi.append(prediction)
+        weight = pickle.load(open('%s/Weight/%s_timestep_%s_fold_Beta'%(OUtput,t,i+1), 'rb'))
+        intercept = pickle.load(open('%s/Intercept/%s_timestep_%s_fold_intercept'%(OUtput,t,i+1), 'rb'))
+        X_tes = pickle.load(open('%s/Folds/%s_fold_X_test_mv'%(OUtput,i+1), 'rb'))
+        y_tes = pickle.load(open('%s/Folds/%s_fold_y_test_mv'%(OUtput,i+1), 'rb'))
+        prediction = X_tes @ weight.T + intercept
+        prediction_list.append(prediction)
         y_test.append(y_tes)
-        Weight.append(weight)
         X_test.append(X_tes)
-        #score_folds.append(r2_score(y_tes,prediction))       
+        Weight.append(weight)
 
-    #mean =np.mean(score_folds)
-    W_final = np.array(Weight).reshape(K,170006)
-    ww = mean_weights(W_final)
-    neg = nifti_masker.inverse_transform(ww)
+    W_final=np.array(Weight).reshape(K,170006)
+    mean_weights =mean_weights(W_final)
+    neg = nifti_masker.inverse_transform(mean_weights)
     nb.save(neg, "%s/FINAL/%s_timestep_weight_map.nii.gz" %(OUtput,t))
-    y_true = np.hstack(y_test)
-    X_all = np.vstack(X_test)
-
-    predict=np.vstack(predi)
+    y_true =np.hstack(y_test)
+    X_all =np.vstack(X_test)
+    predict=np.vstack(prediction_list)
     sc= r2_score(y_true,predict)
-    #print(sc)
+    
     y_true=y_true.reshape(-1,1)
     regr = LinearSVR()
-    
-    # Train the model using the training sets
     a=regr.fit(y_true,predict)
     droite = a.coef_ * y_true + a.intercept_ 
     plt.scatter(y_true,predict)
     plt.plot(y_true,droite,c='r',label="regression line")
     plt.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'k--', lw=4,label="D: y = x")
-    #from sklearn_evaluation import plot
-
     plt.xlabel("True Gose score")
     plt.ylabel("Predicted Gose score")
     plt.title("R2 score")
     plt.legend()
     plt.savefig("%s/%s_parcellation_r2_correlation.png" %(OUtput,t))
-   
     
     pickle.dump(predict, open('%s/FINAL/%s_timestep_predict'%(OUtput,t), 'wb'))   
     pickle.dump(sc, open('%s/FINAL/%s_timestep_r2_score'%(OUtput,t), 'wb'))   
-    pickle.dump(ww, open('%s/FINAL/%s_timestep_Weight'%(OUtput,t), 'wb')) 
-    #pickle.dump(score_folds, open('%s/FINAL/%s_timestep_score_folds'%(OUtput,t), 'wb')) 
-    pickle.dump(Weight, open('%s/FINAL/%s_timestep_Weight_folds'%(OUtput,t), 'wb')) 
-    #pickle.dump(mean, open('%s/FINAL/%s_timestep_moyenne_sc_folds'%(OUtput,t),'wb'))
+    pickle.dump(mean_weights, open('%s/FINAL/%s_timestep_Weight'%(OUtput,t), 'wb')) 
+    pickle.dump(y_true, open('%s/FINAL/y_true'%(OUtput,t), 'wb')) 
 
 
 
@@ -362,23 +370,28 @@ if __name__ == "__main__":
     warnings.warn = warn
     L = sys.argv[1]
     Outcome , ID_patient = read_labels(path_label)  
+    
     X1= pickle.load(open('X1', 'rb'))
     X2= pickle.load(open('X2', 'rb'))
     X3= pickle.load(open('X3', 'rb'))
     X4= pickle.load(open('X4', 'rb')) 
+    
     X1_normalized=normalize(X1,norm='l2',axis=1)
     X2_normalized=normalize(X2,norm='l2',axis=1) 
     X3_normalized=normalize(X3,norm='l2',axis=1)
-    X4_normalized=normalize(X4,norm='l2',axis=1)      
-    
-    if 'FA' in L:
-        run(LinearSVR(),X1_normalized,Outcome)   
-    elif 'MD' in L:
-        run(LinearSVR(),X2_normalized,Outcome)   
-    elif 'L1' in L:
-        run(LinearSVR(),X3_normalized,Outcome)   
-    elif 'Lt' in L:
-        run(LinearSVR(),X4_normalized,Outcome)   
+    X4_normalized=normalize(X4,norm='l2',axis=1)   
 
-    recupere_resultat(10,100)     #10 number of folds of the external loop and 100 the desired number of parcellations to load results.
-
+    if 'FA' and 'MD' in L:
+        run(LinearSVR(),X1_normalized,X2_normalized,Outcome)   
+    elif 'FA' and 'L1' in L:
+        run(LinearSVR(),X1_normalized,X3_normalized,Outcome)   
+    elif 'FA' and 'Lt' in L:
+        run(LinearSVR(),X1_normalized,X4_normalized,Outcome)   
+    elif 'MD' and 'L1' in L:
+        run(LinearSVR(),X2_normalized,X3_normalized,Outcome)   
+    elif 'MD' and 'Lt' in L:
+        run(LinearSVR(),X2_normalized,X4_normalized,Outcome)  
+    elif 'L1' and 'Lt' in L:
+        run(LinearSVR(),X3_normalized,X4_normalized,Outcome)   
+  
+    recupere_resultat(10,50)
